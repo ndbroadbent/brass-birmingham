@@ -829,6 +829,13 @@ h1, h2, h3 {
     pointer-events: none;
 }
 
+/* AI turn: lock the action panel and hand so the human can't interfere */
+#bottom-panel.ai-turn #action-panel,
+#bottom-panel.ai-turn #hand-container {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 #hand-container {
     flex: 1;
     padding: 8px 12px;

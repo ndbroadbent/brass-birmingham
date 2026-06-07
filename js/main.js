@@ -108,8 +108,12 @@ function startGame(numPlayers, playerNames, aiCount = 0) {
     document.getElementById('setup-screen').classList.remove('active');
     document.getElementById('game-screen').classList.add('active');
 
+    // Optional reproducible seed via ?seed=... in the URL (otherwise random).
+    const seedParam = new URLSearchParams(window.location.search).get('seed');
+
     // Create game state
-    gameState = new GameState(numPlayers, playerNames, aiCount);
+    gameState = new GameState(numPlayers, playerNames, aiCount, seedParam);
+    console.log(`Game seed: ${gameState.seed} (replay with ?seed=${gameState.seed})`);
 
     // Create game logic
     gameLogic = new GameLogic(gameState);

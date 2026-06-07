@@ -22,7 +22,7 @@ class GameLogic {
             case ACTIONS.SELL: return this.getValidSellTargets(playerId).length > 0;
             case ACTIONS.LOAN: return true; // Can always take a loan
             case ACTIONS.SCOUT: return this.canScout(playerId);
-            case ACTIONS.PASS: return true; // Can always pass
+            case ACTIONS.PASS: return true; // May always pass (still discards a card)
             default: return false;
         }
     }
@@ -185,13 +185,15 @@ class GameLogic {
         const player = this.state.players[playerId];
         const key = `${cityId}_${slotIndex}`;
 
-        // Get the tile to place
-        const tileData = this.state.useNextTile(playerId, industryType);
-        if (!tileData) return { success: false, message: 'No tile available' };
-
-        // Calculate and pay costs
+        // Calculate the cost FIRST, while getNextTile still points at the tile
+        // we're about to build (calculateBuildCost reads it). Consuming the tile
+        // before costing it would price the *following* tile instead.
         const cost = this.calculateBuildCost(playerId, industryType, cityId);
         if (!cost) return { success: false, message: 'Cannot afford this build' };
+
+        // Now remove the tile from the player's mat and place it.
+        const tileData = this.state.useNextTile(playerId, industryType);
+        if (!tileData) return { success: false, message: 'No tile available' };
 
         this.state.spendMoney(playerId, cost.total);
 
@@ -589,6 +591,15 @@ class GameLogic {
     }
 
     // ========================================================================
+    // PASS Action
+    // ========================================================================
+
+    executePass(playerId, cardIndex) {
+        this.discardCard(playerId, cardIndex);
+        return { success: true, message: 'Passed' };
+    }
+
+    // ========================================================================
     // SCOUT Action
     // ========================================================================
 
@@ -634,15 +645,6 @@ class GameLogic {
         this.state.wildIndustryPile--;
 
         return { success: true, message: 'Scouted: gained Wild Location + Wild Industry' };
-    }
-
-    // ========================================================================
-    // PASS Action
-    // ========================================================================
-
-    executePass(playerId, cardIndex) {
-        this.discardCard(playerId, cardIndex);
-        return { success: true, message: 'Passed' };
     }
 
     // ========================================================================

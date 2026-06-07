@@ -3,10 +3,14 @@
 // ============================================================================
 
 class GameState {
-    constructor(numPlayers, playerNames, aiCount = 0) {
+    constructor(numPlayers, playerNames, aiCount = 0, seed = null) {
         this.numPlayers = numPlayers;
         this.playerNames = playerNames;
         this.aiCount = aiCount;
+
+        // Seeded RNG: same seed => identical shuffles => fully reproducible game.
+        this.seed = normalizeSeed(seed === null || seed === undefined ? randomSeed() : seed);
+        this.rng = makeRNG(this.seed);
         this.era = ERA.CANAL;
         this.round = 1;
         this.currentPlayerIndex = 0;
@@ -157,7 +161,7 @@ class GameState {
 
     shuffleArray(arr) {
         for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = Math.floor(this.rng() * (i + 1));
             [arr[i], arr[j]] = [arr[j], arr[i]];
         }
     }

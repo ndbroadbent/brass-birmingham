@@ -30,12 +30,16 @@ class UIManager {
         this.state = gameState;
         this.logic = gameLogic;
         this.renderer = boardRenderer;
+        this.ai = new AIPlayer(gameState, gameLogic, 'optimal_a');
+        this.aiThinking = false;
 
         this.bindEvents();
         this.addLogEntry(null, `Game started with ${this.state.numPlayers} players`, 'system');
         this.addLogEntry(null, `Canal Era`, 'era');
         this.previousPlayerId = this.state.currentPlayerId;
         this.refresh();
+        // In case the very first player to act is AI-controlled.
+        this.maybeRunAITurn();
     }
 
     // ========================================================================
@@ -97,7 +101,7 @@ class UIManager {
             `Round ${this.state.round} | Deck: ${this.state.drawDeck.length}`;
 
         const playerLabel = document.getElementById('current-player-label');
-        playerLabel.textContent = `${player.name}'s Turn`;
+        playerLabel.textContent = player.isAI ? `${player.name}'s Turn (AI…)` : `${player.name}'s Turn`;
         playerLabel.style.backgroundColor = player.color;
         playerLabel.style.color = player.colorName === 'White' ? '#1a1510' : 'white';
 
@@ -231,10 +235,15 @@ class UIManager {
 
     updateActionButtons() {
         const playerId = this.state.currentPlayerId;
+        const aiTurn = this.isAITurn();
+
+        // During AI turns, lock the whole action panel so the human can't interfere.
+        const bottomPanel = document.getElementById('bottom-panel');
+        if (bottomPanel) bottomPanel.classList.toggle('ai-turn', aiTurn);
 
         document.querySelectorAll('.action-btn').forEach(btn => {
             const action = btn.dataset.action;
-            const canDo = this.logic.canPerformAction(action, playerId);
+            const canDo = !aiTurn && this.logic.canPerformAction(action, playerId);
             btn.disabled = !canDo;
             btn.classList.toggle('active', this.selectedAction === action);
 
@@ -451,6 +460,7 @@ class UIManager {
     // ========================================================================
 
     onCardClicked(index) {
+        if (this.isAITurn()) return; // Ignore clicks during AI turns
         if (this.selectedCard === index) {
             this.selectedCard = null;
         } else {
@@ -469,6 +479,7 @@ class UIManager {
     // ========================================================================
 
     onActionSelected(action) {
+        if (this.isAITurn()) return; // Ignore clicks during AI turns
         if (this.selectedAction === action) {
             this.cancelAction();
             return;
@@ -934,6 +945,14 @@ class UIManager {
         } else {
             this.showToast(result.message, 'error');
             this.cancelAction();
+            // An AI should never get stuck on a failed move: fall back to a loan
+            // (always legal) so the turn still advances and the panel unlocks.
+            if (this.isAITurn()) {
+                const playerId = this.state.currentPlayerId;
+                this.logic.executeLoan(playerId, this.ai.pickDiscardCard(playerId));
+                this.addLogEntry(playerId, `took £${LOAN_AMOUNT} loan`);
+                this.completeAction({ success: true, message: `Took £${LOAN_AMOUNT} loan` });
+            }
             return;
         }
 
@@ -967,6 +986,53 @@ class UIManager {
         }
 
         this.refresh();
+
+        // Hand control to the AI if the (possibly new) current player is a bot.
+        this.maybeRunAITurn();
+    }
+
+    // ========================================================================
+    // AI Turn Handling
+    // ========================================================================
+
+    // If the current player is AI-controlled, schedule its next action after a
+    // short pause so the human can follow what's happening. Chains naturally:
+    // each AI action runs completeAction(), which calls back here for the next
+    // action (or the next AI player) until it's a human's turn or the game ends.
+    isAITurn() {
+        const player = this.state.currentPlayer;
+        return !!(player && player.isAI);
+    }
+
+    maybeRunAITurn() {
+        if (this.state.gameOver) return;
+        const player = this.state.currentPlayer;
+        if (!player || !player.isAI) return;
+        if (this.aiThinking) return;
+
+        this.aiThinking = true;
+        setTimeout(() => {
+            this.aiThinking = false;
+            this.runAIMove();
+        }, 900);
+    }
+
+    runAIMove() {
+        if (this.state.gameOver) return;
+        const playerId = this.state.currentPlayerId;
+        const player = this.state.players[playerId];
+        if (!player || !player.isAI) return;
+
+        const move = this.ai.chooseMove(playerId);
+        if (!move) return; // No legal move (e.g. empty hand) — turn flow will skip.
+
+        // Drive the move through the same pipeline a human action uses.
+        this.selectedAction = move.action;
+        this.actionStep = 1;
+        this.pendingData = move.pendingData || {};
+        if (move.scoutCards) this.pendingData.scoutCards = move.scoutCards;
+        this.selectedCard = move.cardIndex;
+        this.processActionStep();
     }
 
     // ========================================================================
@@ -974,6 +1040,7 @@ class UIManager {
     // ========================================================================
 
     onBoardClick(e) {
+        if (this.isAITurn()) return; // Ignore clicks during AI turns
         const target = e.target.closest('.industry-slot, .connection-line, .brewery-farm, .merchant-group');
         if (!target) return;
 
@@ -1075,6 +1142,7 @@ class UIManager {
         document.getElementById('scoring-continue-btn').onclick = () => {
             overlay.classList.add('hidden');
             this.refresh();
+            this.maybeRunAITurn();
         };
     }
 
