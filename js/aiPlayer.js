@@ -80,6 +80,21 @@ const OPT_A = {
     passVP: -3.0,
 };
 
+// optimal_b — forked from optimal_a, then tuned head-to-head against it via
+// sim/simulate.js. The decisive win came from DOUBLE-DEVELOP: clearing two
+// tiles in a single action rips through low-value level-1/2 tiles (and the
+// canal-only ones that would otherwise block the rail era), reaching high-VP
+// tiles far faster. Era-end boosts add a little; develop-to-dig was tested and
+// dropped (it over-developed and hurt). Beats optimal_a ~61% head-to-head.
+const OPT_B = {
+    ...OPT_A,
+    lateEraSellBoost: 1.3,     // value flips more as era-end scoring approaches
+    lateEraNetworkBoost: 1.3,  // value links more as era-end scoring approaches
+    digFactor: 0.0,            // (tested, dropped — over-developed)
+    doubleDevelop: true,       // remove two tiles in one develop action
+    doubleDevelopBonus: 2.0,   // strongly favour double over single develop
+};
+
 // ----------------------------------------------------------------------------
 // Strategy registry. Add new entries here to make them available to both the
 // UI (by name) and the simulation harness.
@@ -129,7 +144,13 @@ const STRATEGIES = {
     // build-up, develop-to-unlock, market access). See AIPlayer.optimalMove.
     optimal_a: {
         name: 'optimal_a',
-        custom: (ai, playerId) => ai.optimalMove(playerId),
+        custom: (ai, playerId) => ai.optimalMove(playerId, OPT_A),
+    },
+    // optimal_b: forked from optimal_a, adds era-end awareness, develop-to-dig
+    // toward high-VP tiles, and double-develop. Tuned by playing vs optimal_a.
+    optimal_b: {
+        name: 'optimal_b',
+        custom: (ai, playerId) => ai.optimalMove(playerId, OPT_B),
     },
 };
 
@@ -297,19 +318,21 @@ class AIPlayer {
     }
 
     // ========================================================================
-    // optimal_a — score every legal move on one scale and play the best.
+    // optimal_a / optimal_b — score every legal move on one VP-equivalent scale
+    // and play the best. Behaviour is driven entirely by the weights/config
+    // object `w` (OPT_A or OPT_B), so both strategies share this engine.
     // ========================================================================
 
-    optimalMove(playerId) {
+    optimalMove(playerId, w) {
         const ctx = this.optContext(playerId);
         const candidates = [
-            this.optSell(playerId, ctx),
-            this.optBuild(playerId, ctx),
-            this.optNetwork(playerId, ctx),
-            this.optDevelop(playerId, ctx),
-            this.optLoan(playerId, ctx),
-            this.optScout(playerId, ctx),
-            { score: OPT_A.passVP, move: { action: ACTIONS.PASS, pendingData: {}, cardIndex: this.pickDiscardCard(playerId) } },
+            this.optSell(playerId, ctx, w),
+            this.optBuild(playerId, ctx, w),
+            this.optNetwork(playerId, ctx, w),
+            this.optDevelop(playerId, ctx, w),
+            this.optLoan(playerId, ctx, w),
+            this.optScout(playerId, ctx, w),
+            { score: w.passVP, move: { action: ACTIONS.PASS, pendingData: {}, cardIndex: this.pickDiscardCard(playerId) } },
         ].filter(Boolean);
 
         candidates.sort((a, b) => b.score - a.score);
@@ -319,6 +342,8 @@ class AIPlayer {
     // Shared per-decision context.
     optContext(playerId) {
         const player = this.state.players[playerId];
+        const handsLeft = this.state.players.reduce((n, p) => n + p.hand.length, 0);
+        const cardsLeft = this.state.drawDeck.length + handsLeft;
         return {
             player,
             isRail: this.state.era === ERA.RAIL,
@@ -326,6 +351,10 @@ class AIPlayer {
             income: player.income,
             marketAccess: this.hasMarketAccess(playerId),
             beer: this.hasBeer(playerId),
+            // Era-end proximity: links and flipped tiles score at era end, so
+            // late in an era it pays to lock in sells and links. 1 = at the end.
+            cardsLeft,
+            lateEra: cardsLeft <= this.state.numPlayers * 4,
         };
     }
 
@@ -362,45 +391,47 @@ class AIPlayer {
     }
 
     // Flip probability for a freshly-built tile of a given type.
-    flipProb(industryType, ctx) {
-        if (industryType === INDUSTRY_TYPES.COAL_MINE) return OPT_A.flip.coal;
-        if (industryType === INDUSTRY_TYPES.IRON_WORKS) return OPT_A.flip.iron;
-        if (industryType === INDUSTRY_TYPES.BREWERY) return OPT_A.flip.brewery;
+    flipProb(industryType, ctx, w) {
+        if (industryType === INDUSTRY_TYPES.COAL_MINE) return w.flip.coal;
+        if (industryType === INDUSTRY_TYPES.IRON_WORKS) return w.flip.iron;
+        if (industryType === INDUSTRY_TYPES.BREWERY) return w.flip.brewery;
         if (isSellableIndustry(industryType)) {
             // Selling most goods needs BOTH a merchant connection and beer.
-            if (ctx.marketAccess && ctx.beer) return OPT_A.flip.sellableConnected;
-            if (ctx.marketAccess || ctx.beer) return (OPT_A.flip.sellableConnected + OPT_A.flip.sellableUnconnected) / 2;
-            return OPT_A.flip.sellableUnconnected;
+            if (ctx.marketAccess && ctx.beer) return w.flip.sellableConnected;
+            if (ctx.marketAccess || ctx.beer) return (w.flip.sellableConnected + w.flip.sellableUnconnected) / 2;
+            return w.flip.sellableUnconnected;
         }
-        return OPT_A.flip.other;
+        return w.flip.other;
     }
 
     // Selling realizes the VP of otherwise-worthless unflipped tiles, plus
     // income and link potential — usually the strongest move when available.
-    optSell(playerId, ctx) {
+    optSell(playerId, ctx, w) {
         const targets = this.logic.getValidSellTargets(playerId);
         if (targets.length === 0) return null;
-        let score = OPT_A.sellFlat;
+        let score = w.sellFlat;
         for (const t of targets) {
             const td = t.tile.tileData;
-            score += td.vp * OPT_A.sellRealize;
-            score += td.income * OPT_A.incomeVP;
-            score += td.linkVP * OPT_A.linkVP;
+            score += td.vp * w.sellRealize;
+            score += td.income * w.incomeVP;
+            score += td.linkVP * w.linkVP;
         }
+        // Late in an era, locking in flips before scoring is extra valuable.
+        if (w.lateEraSellBoost && ctx.lateEra) score *= w.lateEraSellBoost;
         return {
             score,
             move: { action: ACTIONS.SELL, pendingData: { tileKeys: targets.map(t => t.key) }, cardIndex: this.pickDiscardCard(playerId) },
         };
     }
 
-    optBuild(playerId, ctx) {
+    optBuild(playerId, ctx, w) {
         const targets = this.logic.getValidBuildTargets(playerId);
         if (targets.length === 0) return null;
         let best = null;
         for (const t of targets) {
             const validCards = this.logic.getValidCardsForAction(playerId, ACTIONS.BUILD, t);
             if (validCards.length === 0) continue;
-            const score = this.buildValue(t, ctx);
+            const score = this.buildValue(t, ctx, w);
             if (!best || score > best.score) {
                 best = { score, target: t, cardIndex: this.pickBuildCard(playerId, validCards) };
             }
@@ -416,32 +447,32 @@ class AIPlayer {
         };
     }
 
-    buildValue(t, ctx) {
+    buildValue(t, ctx, w) {
         const td = t.tileData;
         const type = t.industryType;
-        const flip = this.flipProb(type, ctx);
+        const flip = this.flipProb(type, ctx, w);
         const isMine = type === INDUSTRY_TYPES.COAL_MINE || type === INDUSTRY_TYPES.IRON_WORKS;
 
         let score = 0;
         // VP is the dominant term; flippable tiles count for more of it.
-        score += td.vp * (OPT_A.vpBase + OPT_A.vpFlip * flip);
-        score += td.income * OPT_A.incomeVP * (OPT_A.incBase + OPT_A.incFlip * flip);
-        score += td.linkVP * OPT_A.linkVP * flip;
-        if (isMine) score += (td.resourceCubes || 0) * OPT_A.mineCube;
+        score += td.vp * (w.vpBase + w.vpFlip * flip);
+        score += td.income * w.incomeVP * (w.incBase + w.incFlip * flip);
+        score += td.linkVP * w.linkVP * flip;
+        if (isMine) score += (td.resourceCubes || 0) * w.mineCube;
         // A brewery is worth more than its own VP: its beer lets you sell (flip)
         // high-VP goods. Worth most when you don't already have beer.
-        if (type === INDUSTRY_TYPES.BREWERY && !ctx.beer) score += OPT_A.brewerySynergy;
-        score += OPT_A.buildTempo;
-        score -= (t.cost ? t.cost.total : 0) * OPT_A.moneyVP;
+        if (type === INDUSTRY_TYPES.BREWERY && !ctx.beer) score += w.brewerySynergy;
+        score += w.buildTempo;
+        score -= (t.cost ? t.cost.total : 0) * w.moneyVP;
         return score;
     }
 
-    optNetwork(playerId, ctx) {
+    optNetwork(playerId, ctx, w) {
         const targets = this.logic.getValidNetworkTargets(playerId);
         if (targets.length === 0) return null;
         let best = null;
         for (const t of targets) {
-            const score = this.networkValue(t, ctx);
+            const score = this.networkValue(t, ctx, w);
             if (!best || score > best.score) best = { score, t };
         }
         return {
@@ -450,7 +481,7 @@ class AIPlayer {
         };
     }
 
-    networkValue(t, ctx) {
+    networkValue(t, ctx, w) {
         const conn = CONNECTIONS.find(c => c.id === t.connectionId);
         let linkPts = 0;
         let reach = 0;
@@ -463,64 +494,113 @@ class AIPlayer {
                     for (let i = 0; i < city.slots.length; i++) {
                         const tile = this.state.boardIndustries[`${cityId}_${i}`];
                         if (tile) linkPts += tile.tileData.linkVP * (tile.flipped ? 1 : 0.6);
-                        else reach += OPT_A.reachCube;
+                        else reach += w.reachCube;
                     }
                 }
             }
         }
-        let score = linkPts * OPT_A.linkVP + reach;
-        if (touchesMerchant && !ctx.marketAccess) score += OPT_A.openMarket;
-        score -= (t.cost || 0) * OPT_A.moneyVP;
+        let score = linkPts * w.linkVP + reach;
+        if (touchesMerchant && !ctx.marketAccess) score += w.openMarket;
+        score -= (t.cost || 0) * w.moneyVP;
         score += 0.5; // base reach value
+        // Links score at era end; near it, prioritise locking in connections.
+        if (w.lateEraNetworkBoost && ctx.lateEra) score *= w.lateEraNetworkBoost;
         return score;
     }
 
-    optDevelop(playerId, ctx) {
+    optDevelop(playerId, ctx, w) {
         if (!this.logic.canDevelop(playerId)) return null;
         const player = this.state.players[playerId];
         const types = this.logic.getDevelopableTypes(playerId);
-        let best = null;
+
+        // Score developing one tile of each developable type.
+        const scored = [];
         for (const dt of types) {
-            const tiles = player.industryTiles[dt.type];
-            const removing = dt.tile;
-            const idx = tiles.indexOf(removing);
-            const next = tiles.slice(idx + 1).find(x => !x.used);
-            const canalOnly = removing.canalEra && !removing.railEra;
-
-            let s = OPT_A.develBase;
-            if (canalOnly && ctx.isRail) s += OPT_A.develUnlockRail; // unblock type in rail era
-            else if (canalOnly) s += OPT_A.develCanalLate;
-            if (next) s += Math.max(0, next.vp - removing.vp) * OPT_A.develRevealGain;
-
-            if (!best || s > best.s) best = { s, type: dt.type };
+            scored.push({ type: dt.type, s: this.developTypeValue(player, dt, ctx, w) });
         }
-        if (!best) return null;
+        if (scored.length === 0) return null;
+        scored.sort((a, b) => b.s - a.s);
 
-        // Subtract the iron cost of developing (free from your own works, else market).
+        const ironPerTile = this.developIronCost(playerId, w);
+        const top = scored[0];
+
+        // Single develop candidate.
+        let bestScore = top.s - ironPerTile;
+        let move = { action: ACTIONS.DEVELOP, pendingData: { industryType1: top.type, industryType2: null }, cardIndex: this.pickDiscardCard(playerId) };
+
+        // Double-develop (optimal_b): remove two tiles in one action to dig
+        // faster, if there's enough iron and a worthwhile second tile.
+        if (w.doubleDevelop && this.state.findIronSource(playerId).length >= 2) {
+            const second = this.secondDevelopType(player, top.type, scored, ctx, w);
+            if (second) {
+                const doubleScore = top.s + second.s - 2 * ironPerTile + w.doubleDevelopBonus;
+                if (doubleScore > bestScore) {
+                    bestScore = doubleScore;
+                    move = { action: ACTIONS.DEVELOP, pendingData: { industryType1: top.type, industryType2: second.type }, cardIndex: this.pickDiscardCard(playerId) };
+                }
+            }
+        }
+
+        return { score: bestScore, move };
+    }
+
+    // Value of developing (removing) the next tile of a type.
+    developTypeValue(player, dt, ctx, w) {
+        const tiles = player.industryTiles[dt.type];
+        const removing = dt.tile;
+        const idx = tiles.indexOf(removing);
+        const rest = tiles.slice(idx + 1).filter(x => !x.used);
+        const next = rest[0];
+        const canalOnly = removing.canalEra && !removing.railEra;
+
+        let s = w.develBase;
+        if (canalOnly && ctx.isRail) s += w.develUnlockRail; // unblock type in rail era
+        else if (canalOnly) s += w.develCanalLate;
+        if (next) s += Math.max(0, next.vp - removing.vp) * w.develRevealGain;
+
+        // Dig bonus (optimal_b): reward developing toward a much higher-VP tile
+        // further up the stack (e.g. digging to pottery's top tile).
+        if (w.digFactor && rest.length) {
+            const bestAhead = Math.max(...rest.map(x => x.vp));
+            s += Math.max(0, bestAhead - removing.vp) * w.digFactor;
+        }
+        return s;
+    }
+
+    // Pick a worthwhile second tile to develop alongside `firstType`. Prefer
+    // digging the same stack further if that's where the value is.
+    secondDevelopType(player, firstType, scored, ctx, w) {
+        // Simulate the first removal by treating the next tile of firstType as
+        // the new "next" for a re-evaluation.
+        const tiles = player.industryTiles[firstType];
+        const firstNextIdx = tiles.findIndex(x => !x.used);
+        const afterFirst = tiles.slice(firstNextIdx + 1).find(x => !x.used);
+        if (afterFirst) {
+            const s = this.developTypeValue(player, { type: firstType, tile: afterFirst }, ctx, w);
+            const otherBest = scored.find(x => x.type !== firstType);
+            if (!otherBest || s >= otherBest.s) return { type: firstType, s };
+            return otherBest;
+        }
+        return scored.find(x => x.type !== firstType) || null;
+    }
+
+    developIronCost(playerId, w) {
         const ironSources = this.state.findIronSource(playerId);
         const ironCost = (ironSources.length && ironSources[0].free) ? 0 : this.state.getIronPrice();
-        const score = best.s - (Number.isFinite(ironCost) ? ironCost : 6) * OPT_A.moneyVP;
-
-        return {
-            score,
-            move: { action: ACTIONS.DEVELOP, pendingData: { industryType1: best.type, industryType2: null }, cardIndex: this.pickDiscardCard(playerId) },
-        };
+        return (Number.isFinite(ironCost) ? ironCost : 6) * w.moneyVP;
     }
 
     // Loans cost income (3/round + 3 VP at end), so they're only worth it when
     // cash is short enough that it's blocking better plays.
-    optLoan(playerId, ctx) {
-        // Income converts 1:1 to end-game VP and is rarely the binding
-        // constraint, so loaning is usually a net loss — only worth it when
-        // genuinely cash-starved.
-        let score = LOAN_AMOUNT * OPT_A.moneyVP - LOAN_INCOME_PENALTY;
-        if (ctx.money < 6) score += OPT_A.lowCashBoost;
+    optLoan(playerId, ctx, w) {
+        let score = LOAN_AMOUNT * w.moneyVP - LOAN_INCOME_PENALTY;
+        if (ctx.money < 6) score += w.lowCashBoost;
         return { score, move: { action: ACTIONS.LOAN, pendingData: {}, cardIndex: this.pickDiscardCard(playerId) } };
     }
 
-    optScout(playerId, ctx) {
+    optScout(playerId, ctx, w) {
         if (!this.logic.canScout(playerId)) return null;
-        let score = OPT_A.scoutVP;
+        let score = w.scoutVP;
         if (ctx.isRail) score -= 1; // less time to exploit wilds late
         return { score, move: { action: ACTIONS.SCOUT, pendingData: {}, scoutCards: [0, 1], cardIndex: 2 } };
     }

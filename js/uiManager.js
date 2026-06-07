@@ -30,7 +30,7 @@ class UIManager {
         this.state = gameState;
         this.logic = gameLogic;
         this.renderer = boardRenderer;
-        this.ai = new AIPlayer(gameState, gameLogic, 'optimal_a');
+        this.ai = new AIPlayer(gameState, gameLogic, 'optimal_b');
         this.aiThinking = false;
 
         this.bindEvents();
