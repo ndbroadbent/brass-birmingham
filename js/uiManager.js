@@ -167,7 +167,11 @@ class UIManager {
             if (card.type === CARD_TYPES.LOCATION) {
                 cardEl.classList.add('location-card');
                 const city = CITIES[card.location];
-                const regionColor = city ? REGION_COLORS[city.region]?.fill : '#4a4a4a';
+                const regionColor = city ? REGION_COLORS[city.region] : null;
+                if (regionColor) {
+                    cardEl.style.setProperty('--region-fill', regionColor.fill);
+                    cardEl.style.setProperty('--region-border', regionColor.border);
+                }
 
                 cardEl.innerHTML = `
                     <div class="card-type">Location</div>

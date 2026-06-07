@@ -217,6 +217,19 @@ h1, h2, h3 {
     font-weight: 700;
 }
 
+.count-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    color: var(--text-muted);
+    background: var(--bg-dark);
+    border-color: var(--border-dark);
+}
+
+.count-btn:disabled:hover {
+    border-color: var(--border-dark);
+    color: var(--text-muted);
+}
+
 .player-name-inputs {
     display: flex;
     flex-direction: column;
@@ -252,6 +265,24 @@ h1, h2, h3 {
 
 .player-name-input input:focus {
     border-color: var(--accent-gold);
+}
+
+.player-name-input input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    font-style: italic;
+}
+
+.player-name-input .ai-badge {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--bg-dark);
+    background: var(--accent-copper);
+    border-radius: 4px;
 }
 
 .btn-primary {
@@ -906,16 +937,17 @@ h1, h2, h3 {
 }
 
 /* Card type-specific colored top borders */
-.card.location-card::before { background: #5a8a5a; }
+.card.location-card::before { background: var(--region-fill, #5a8a5a); }
 .card.industry-card::before { background: #8a5a5a; }
 .card.wild-card::before { background: linear-gradient(90deg, var(--accent-gold), var(--accent-copper), var(--accent-gold)); }
 
+/* Location cards use their board region color for the border */
 .card.location-card {
-    border-color: #3a5a3a;
+    border-color: var(--region-border, #3a5a3a);
 }
 
 .card.location-card:hover {
-    border-color: #6a9a6a;
+    border-color: var(--region-fill, #6a9a6a);
 }
 
 .card.industry-card {

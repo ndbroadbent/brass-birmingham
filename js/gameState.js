@@ -3,9 +3,10 @@
 // ============================================================================
 
 class GameState {
-    constructor(numPlayers, playerNames) {
+    constructor(numPlayers, playerNames, aiCount = 0) {
         this.numPlayers = numPlayers;
         this.playerNames = playerNames;
+        this.aiCount = aiCount;
         this.era = ERA.CANAL;
         this.round = 1;
         this.currentPlayerIndex = 0;
@@ -18,8 +19,9 @@ class GameState {
 
         // Initialize players
         this.players = [];
+        const firstAiIndex = numPlayers - aiCount; // trailing players are AI
         for (let i = 0; i < numPlayers; i++) {
-            this.players.push(this.createPlayer(i, playerNames[i]));
+            this.players.push(this.createPlayer(i, playerNames[i], i >= firstAiIndex));
         }
 
         // Turn order starts as player order
@@ -53,7 +55,7 @@ class GameState {
         this.pendingAction = null; // { action, step, data }
     }
 
-    createPlayer(index, name) {
+    createPlayer(index, name, isAI = false) {
         // Create industry tile stacks for this player
         const industryTiles = {};
         for (const [type, levels] of Object.entries(INDUSTRY_DATA)) {
@@ -72,6 +74,7 @@ class GameState {
         return {
             id: index,
             name: name,
+            isAI: isAI,
             color: PLAYER_COLORS[index],
             bgColor: PLAYER_BG_COLORS[index],
             colorName: PLAYER_NAMES[index],
